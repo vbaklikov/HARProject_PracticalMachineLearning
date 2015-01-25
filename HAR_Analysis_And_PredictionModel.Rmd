@@ -1,0 +1,96 @@
+---
+title: "Human Activity Recognition"
+author: "Vitaliy Baklikov"
+date: "January 25, 2015"
+output: html_document
+---
+
+Human Activity Recognition. Analysis & Prediction Model
+============================
+
+# Background
+
+This is an analysis of Weight Lifting Exercise dataset. Using devices such as _Jawbone Up, Nike FuelBand,_and _FitBit_ it is now possible to collect a large amount of data about personal activity. One thing that people regularly do is to quantify _how much_ of a particular activity they do, but they rarely quantify _how well they do it_. 6 participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. 
+More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).
+
+What follows is the analysis of the data and a prediction model that attempts to predict the manner in which they did the exercise based on the available sensor data.
+
+# Analysis & Clean up
+
+Let's load the data and look at the variables.
+
+```{r readData}
+require(caret)
+require(randomForest)
+require(knitr)
+
+pmlData <- read.csv("./data/pml-training.csv", header=TRUE, na=c("#DIV/0!","NA"))
+summary(pmlData)
+```
+
+Our dataset consists of 19,622 observations with 160 variables. The goal of the prediction model is to properly predict `classe` variable.
+To build a good prediction model, we first split our dataset into training and testing datasets. This will allow us to build a good model, pick good predictors, and validate our model before moving to predicting values on Validation dataset.
+
+```{r splitData}
+inTrain <- createDataPartition(y=pmlData$classe, p=0.7, list=FALSE)
+training <- pmlData[inTrain,]
+testing <- pmlData[-inTrain,]
+```
+
+
+It is clear that most of the variables are not good predictors and will only skew the prediction model. Let's clean our dataset and remove near zero variation variables, a counter, and mostly empty variables
+
+```{r cleanData}
+nsv <- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[,!nsv$nzv]
+
+training <- training[-c(1)]
+
+nav <- sapply(colnames(training), function(x) if(sum(is.na(training[, x])) > 0.8*nrow(training)){return(TRUE)}else{return(FALSE)})
+
+training <- training[, !nav]
+```
+
+# Build the model
+
+We reduced number of predictors to `r ncol(training)-1`. Let's now fit a model. We will use `{caret}` package for this purpose. We chose a random forest model at first and look at its accuracy. When building a model, we will also use 10 fold cross validation by passing `trainControl(method='cv')` function when training the model. This will allow us to find the best fit model for our training set. Note: it might take a significant amount of time to fit the model. Look into _parallel_ package for possible speed up
+
+```{r buildModel, cache=TRUE}
+set.seed(12345)
+modFit <- train(classe ~ ., data=training, method="rf", importance = TRUE, trControl = trainControl(method="oob",number=4))
+```
+
+Let's analyze our model and look at is accuracy
+
+```{r modelResult}
+modFit
+modFit$finalModel
+```
+
+We get pretty good accuracy rate __0.9993%__. We can see that 500 trees were built with 40 variables tried at each split. Let's now predict the values for our remaining chunk of the dataset `testing` and analyze __out of sample error rate__
+
+# Prediction
+
+```{r prediction}
+predictions <- predict(modFit, newdata = testing)
+confusionMatrix(predictions,testing$classe)
+```
+
+As seen from above, out of sample error rate is very low. Let's now predict value for a given validation dataset and prepare files for submission
+
+```{r generateFinalAnswer}
+resData <- read.csv("./data//pml-testing.csv", header = TRUE)
+#predict the values and convert them to a characted vector for submission
+result <- as.character(predict(modFit,newdata = resData))
+
+#produce individual files for Submission
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("./prediction/problem_id_", i, ".txt")
+    write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, col.names = FALSE)
+  }
+}
+
+pml_write_files(result)
+```
